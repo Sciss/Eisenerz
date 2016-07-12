@@ -25,8 +25,8 @@ import scala.collection.breakOut
 object Exposure extends App {
   val baseDir = userHome / "Documents" / "projects" / "Eisenerz" / "image_work"
   require(baseDir.isDirectory)
-  val inputs  = baseDir.children(f => f.base.startsWith("lapse_") && f.ext == "jpg")
-  val output  = baseDir / "out_lapse.png"
+  val inputs  = baseDir.children(f => f.base.startsWith("lapse_short_") && f.ext == "jpg")
+  val output  = baseDir / "out_lapse_short.png"
 
   var composite: Array[Array[Double]] = _
   var width : Int = _
