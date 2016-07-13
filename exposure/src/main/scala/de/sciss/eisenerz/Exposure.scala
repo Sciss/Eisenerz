@@ -65,7 +65,7 @@ object Exposure {
     var count = outputDir.children(_.name.startsWith("frame-")).flatMap { f =>
       val n = f.name
       Try(n.substring(6, n.indexOf('.', 6)).toInt).toOption
-    } .max + 1
+    } .sorted.lastOption.getOrElse(0) + 1
 
     println(s"Next frame will be #$count")
 
