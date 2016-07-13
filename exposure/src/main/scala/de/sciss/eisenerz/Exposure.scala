@@ -19,6 +19,7 @@ import com.pi4j.io.gpio.GpioFactory
 import de.sciss.file._
 
 import scala.annotation.tailrec
+import scala.util.Try
 
 object Exposure {
   private[this] val outputDir = file("/") / "media" / "pi" / "exposure" / "Pictures"
@@ -41,10 +42,10 @@ object Exposure {
   private[this] val Delay = 10000
 
   def run(): Unit = {
+    require(outputDir.isDirectory && outputDir.canWrite, s"Cannot write to $outputDir")
+
     val keys  = new KeyMatrix
     val led   = new DualColorLED
-
-    var count = 0
 
     val cam = new RPiCamera(outputDir.path)
     // cf. https://raspberrypi.stackexchange.com/questions/14047/
@@ -60,11 +61,19 @@ object Exposure {
 
     led.pulseGreen()  // 'ready'
 
+    // XXX TODO --- this could be slow for lots of pictures; perhaps use 'jumping'
+    var count = outputDir.children(_.name.startsWith("frame-")).flatMap { f =>
+      val n = f.name
+      Try(n.substring(6, n.indexOf('.', 6)).toInt).toOption
+    } .max + 1
+
+    println(s"Next frame will be #$count")
+
     while (state != StateShutdown) {
       if (state == StateRecord) {
-        count += 1
         val name = s"frame-$count.$ext"
         cam.takeStill(name, width, height)
+        count += 1
       }
       var dlyRemain = Delay
       while (dlyRemain > 0) {
