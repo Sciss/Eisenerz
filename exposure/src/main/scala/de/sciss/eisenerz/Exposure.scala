@@ -13,116 +13,112 @@
 
 package de.sciss.eisenerz
 
-import com.pi4j.io.gpio.{GpioFactory, PinMode, PinPullResistance, PinState, RaspiPin}
+import com.hopding.jrpicam.RPiCamera
+import com.hopding.jrpicam.enums.{AWB, Encoding}
+import com.pi4j.io.gpio.GpioFactory
+import de.sciss.file._
 
 import scala.annotation.tailrec
 
 object Exposure {
+  private[this] val outputDir = file("/") / "media" / "pi" / "exposure" / "Pictures"
+
+  sealed trait State
+  case object StatePause    extends State
+  case object StateRecord   extends State
+  case object StateShutdown extends State
+
+  @volatile
+  private[this] var state: State = StatePause
+
   def main(args: Array[String]): Unit = {
-    println("Running 'Key Matrix'...")
-    keyMatrix()
+    // keyMatrix()
+    // dualColorLED()
+    run()
+  }
+
+  /* Delay between taking photos in milliseconds. */
+  private[this] val Delay = 10000
+
+  def run(): Unit = {
+    val keys  = new KeyMatrix
+    val led   = new DualColorLED
+
+    var count = 0
+
+    val cam = new RPiCamera(outputDir.path)
+    // cf. https://raspberrypi.stackexchange.com/questions/14047/
+    cam.setShutter(500000)
+    cam.setAWB(AWB.OFF)
+    val width     = 3280/2
+    val height    = 2464/2
+    val encoding  = Encoding.JPG
+    cam.setEncoding(encoding)
+    cam.turnOffPreview()
+    // cam.setTimeout()
+    val ext = encoding.toString
+
+    led.pulseGreen()  // 'ready'
+
+    while (state != StateShutdown) {
+      if (state == StateRecord) {
+        count += 1
+        val name = s"frame-$count.$ext"
+        cam.takeStill(name, width, height)
+      }
+      var dlyRemain = Delay
+      while (dlyRemain > 0) {
+        Thread.sleep(100)
+        keys.read() match {
+          case '1' =>
+            if (state != StateRecord) {
+              state     = StateRecord
+              dlyRemain = 0
+              led.pulseRed()
+            }
+          case '2' =>
+            if (state != StatePause) {
+              state = StatePause
+              led.pulseGreen()
+            }
+          case '9' =>
+            state     = StateShutdown
+            dlyRemain = 0
+            led.blinkRed()
+        }
+        dlyRemain -= 100
+      }
+    }
+
+    import scala.sys.process._
+    Seq("sudo", "shutdown", "now").!
   }
 
   def keyMatrix(): Unit = {
-    val NotPressed = 'X'
+    println("Running 'Key Matrix'...")
 
-    val KeyPad = Array(
-      Array('1', '2', '3'),
-      Array('4', '5', '6'),
-      Array('7', '8', '9')
-    )
-
-    import RaspiPin._
-
-    // so we use GPIO_00 and GPIO_01 for the LED (could drop one)
-
-    val rows    = Array(GPIO_07, GPIO_02, GPIO_03)  // 18,23,24,25
-    val columns = Array(GPIO_04, GPIO_05, GPIO_06)  // 4,17,22
-
-    val io      = GpioFactory.getInstance
-
-    val rowPins = rows   .map(pin => io.provisionDigitalMultipurposePin(pin, PinMode.DIGITAL_INPUT, PinPullResistance.PULL_UP))
-    val colPins = columns.map(pin => io.provisionDigitalMultipurposePin(pin, PinMode.DIGITAL_OUTPUT))
-
-    // Reinitialize all rows and columns as input at exit
-    (rowPins ++ colPins).foreach(_.setShutdownOptions(true, PinState.LOW, PinPullResistance.PULL_UP, PinMode.DIGITAL_INPUT))
-
-    def readKey(): Char = {
-      // Set all columns as output low
-      colPins.foreach { pin =>
-        pin.setMode(PinMode.DIGITAL_OUTPUT)
-        pin.low()
-      }
-
-      // Set all rows as input
-      rowPins.foreach { pin =>
-        pin.setMode(PinMode.DIGITAL_INPUT)
-        pin.setPullResistance(PinPullResistance.PULL_UP)
-      }
-
-      // Scan rows for pushed key/button
-      // A valid key press should set "rowVal"  between 0 and 3.
-      val rowIdx = rowPins.indexWhere(_.isLow)
-
-      // if rowIdx is not in 0 to 2 then no button was pressed and we can exit
-      if (rowIdx < 0) return NotPressed
-
-      // Convert columns to input
-      colPins.foreach { pin =>
-        pin.setMode(PinMode.DIGITAL_INPUT)
-        pin.setPullResistance(PinPullResistance.PULL_DOWN)
-      }
-
-      // Switch the i-th row found from scan to output
-      val rowPin = rowPins(rowIdx)
-      rowPin.setMode(PinMode.DIGITAL_OUTPUT)
-      rowPin.high()
-
-      // Scan columns for still-pushed key/button
-      // A valid key press should set "colIdx"  between 0 and 2.
-      val colIdx = colPins.indexWhere(_.isHigh)
-
-      // if colIdx is not in 0 to 2 then no button was pressed and we can exit
-      if (colIdx < 0) return NotPressed
-
-      KeyPad(rowIdx)(colIdx)
-    }
+    val keys  = new KeyMatrix
+    val io    = GpioFactory.getInstance
 
     @tailrec def loop(): Char = {
-      val c = readKey()
-      if (c == NotPressed) loop() else c
+      val c = keys.read()
+      if (c == KeyMatrix.NotPressed) loop() else c
     }
 
     val res = loop()
     println(s"Key pressed: $res")
+    io.shutdown()
   }
 
   // XXX TODO --- use pwm, so we can balance red and green intensity for orange mix
   def dualColorLED(): Unit = {
+    val led   = new DualColorLED
     val io    = GpioFactory.getInstance
-    val pinR  = io.provisionDigitalOutputPin(RaspiPin.GPIO_00, "Red"  , PinState.HIGH)
-    val pinG  = io.provisionDigitalOutputPin(RaspiPin.GPIO_01, "Green", PinState.LOW )
-    pinR.setShutdownOptions(true, PinState.LOW)
-    pinG.setShutdownOptions(true, PinState.LOW)
 
-    def infoWait(b: Boolean): Unit = {
-      println("--> GPIO state should be: ON")
-      Thread.sleep(3000)
-    }
-
-    infoWait(true)
-    pinR.low()
-    pinG.high()
-    infoWait(false)
-    pinR.toggle()
-    pinG.toggle()
-    infoWait(true)
-    pinR.toggle()
-    pinG.toggle()
-    infoWait(false)
-    println("--> GPIO state should be: ON for only 1 second")
-    pinR.pulse(1000, true)  // true = blocking
-
+    led.red()
+    Thread.sleep(2000)
+    led.green()
+    Thread.sleep(2000)
     io.shutdown()
   }
 }
