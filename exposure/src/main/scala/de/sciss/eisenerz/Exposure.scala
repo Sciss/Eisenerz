@@ -18,7 +18,7 @@ import com.hopding.jrpicam.enums.{AWB, Encoding}
 import com.pi4j.io.gpio.GpioFactory
 import de.sciss.file._
 
-import scala.annotation.tailrec
+import scala.annotation.{switch, tailrec}
 import scala.util.Try
 
 object Exposure {
@@ -78,7 +78,7 @@ object Exposure {
       var dlyRemain = Delay
       while (dlyRemain > 0) {
         Thread.sleep(100)
-        keys.read() match {
+        (keys.read(): @switch) match {
           case '1' =>
             if (state != StateRecord) {
               state     = StateRecord
@@ -94,6 +94,8 @@ object Exposure {
             state     = StateShutdown
             dlyRemain = 0
             led.blinkRed()
+
+          case _ =>
         }
         dlyRemain -= 100
       }
