@@ -19,7 +19,8 @@ lazy val commonSettings = Seq(
     "com.github.scopt"  %% "scopt"              % "3.4.0",
     "com.pi4j"          %  "pi4j-core"          % "1.0",
     "de.sciss"          %  "jrpicam"            % "0.1.0"
-  )
+  ),
+  target in assembly := baseDirectory.value
 )
 
 //lazy val cc_by_nc_nd = "CC BY-NC-ND 4.0" -> url("http://creativecommons.org/licenses/by-nc-nd/4.0/legalcode")

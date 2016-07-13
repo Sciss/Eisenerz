@@ -50,7 +50,7 @@ object Exposure {
     val cam = new RPiCamera(outputDir.path)
     // cf. https://raspberrypi.stackexchange.com/questions/14047/
     cam.setShutter(500000)
-    cam.setAWB(AWB.OFF)
+    // cam.setAWB(AWB.OFF)
     val width     = 3280/2
     val height    = 2464/2
     val encoding  = Encoding.JPG
