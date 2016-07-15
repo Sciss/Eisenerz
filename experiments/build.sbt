@@ -1,4 +1,4 @@
-lazy val baseName         = "Eisenerz"
+lazy val baseName         = "Eisenerz-Experiments"
 lazy val baseNameL        = baseName.toLowerCase
 lazy val projectVersion   = "0.1.0-SNAPSHOT"
 
