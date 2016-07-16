@@ -24,19 +24,22 @@ import de.sciss.numbers.Implicits._
 
 import scala.collection.breakOut
 
-object Experiments extends App {
-  val baseDir = userHome / "Documents" / "projects" / "Eisenerz" / "image_work"
-  require(baseDir.isDirectory)
-  val inputs  = baseDir.children(f => f.base.startsWith("lapse_short_") && f.ext == "jpg")
+object Experiments {
+  val baseDir = userHome / "Documents" / "projects" / "Eisenerz" / "image_work2"
 
   var composite: Array[Array[Double]] = _
   var width : Int = _
   var height: Int = _
-  require(inputs.nonEmpty)
-  println(s"${inputs.size} images.")
 
-  // average()
-  difference()
+  def main(args: Array[String]): Unit = {
+    require(baseDir.isDirectory)
+    // average()
+    difference()
+//    val i = compareName("frame-112", "frame-99")
+//    println(i)
+//    val j = compareName("frame-106", "frame-1")
+//    println(j)
+  }
 
   // compares strings insensitive to case but sensitive to integer numbers
   def compareName(s1: String, s2: String): Int = {
@@ -56,21 +59,26 @@ object Experiments extends App {
 
       if (d1 && d2) {
         // Enter numerical comparison
-        var c3, c4 = ' '
+        var c3 = c1
+        var c4 = c2
+        var sameChars = c3 == c4
         do {
           i += 1
-          c3 = if (i < n1) s1.charAt(i) else 'x'
-          c4 = if (i < n2) s2.charAt(i) else 'x'
-          d1 = Character.isDigit(c3)
-          d2 = Character.isDigit(c4)
+          val c5 = if (i < n1) s1.charAt(i) else 'x'
+          val c6 = if (i < n2) s2.charAt(i) else 'x'
+          d1 = Character.isDigit(c5)
+          d2 = Character.isDigit(c6)
+          if (sameChars && c5 != c6) {
+            c3 = c5
+            c4 = c6
+            sameChars = false
+          }
         }
-        while (d1 && d2 && c3 == c4)
+        while (d1 && d2)
 
-        if (d1 != d2) return if (d1) 1 else -1
-        if (c1 != c2) return c1 - c2
-        if (c3 != c4) return c3 - c4
+        if (d1 != d2) return if (d1) 1 else -1  // length wins
+        if (!sameChars) return c3 - c4          // first diverging digit wins
         i -= 1
-
       }
       else if (c1 != c2) {
         c1 = Character.toUpperCase(c1)
@@ -93,11 +101,16 @@ object Experiments extends App {
   }
 
   def difference(): Unit = {
+    val inputs = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
+    require(inputs.nonEmpty)
+    println(s"${inputs.size} images.")
     val output  = baseDir / "out_diff.png"
-    val sorted  = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0)
-    require(sorted.nonEmpty)
+    val sorted  = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0)     .take(20)
+    // sorted.foreach(println)
 
-    val fltBlur   = new SmartBlurFilter // default radius 5 is ok
+    val fltBlur = new SmartBlurFilter
+    fltBlur.setRadius(7)
+    fltBlur.setThreshold(20)
     // val fltHisto  = new Histogram
 
     def blur(in: BufferedImage): BufferedImage = fltBlur.filter(in, null)
@@ -106,34 +119,56 @@ object Experiments extends App {
     var bufInB: BufferedImage = null
     var blurA : BufferedImage = null
     var blurB : BufferedImage = null
+    val meanVarA = new Array[(Double, Double)](3)
+    val meanVarB = new Array[(Double, Double)](3)
 
-    locally {
-      val inB = sorted.head
+    def readOne(inB: File): Unit = {
       println(s"Reading ${inB.name}...")
       bufInB  = ImageIO.read(inB)
       blurB   = blur(bufInB)
+    }
+
+    locally {
+      val inB = sorted.head
+      readOne(inB)
       width   = bufInB.getWidth
       height  = bufInB.getHeight
+      (0 until 3).foreach { ch =>
+        val chanB     = extractChannel(blurB , ch).flatten
+        meanVarB(ch)  = (chanB: IndexedSeq[Double]).meanVariance
+        // val meanB     = meanVarB(ch)._1
+        // val varianceB = meanVarB(ch)._2
+        // println(f"[$ch] mean $meanB%1.2f, variance $varianceB%1.2f")
+      }
     }
 
     composite = Array.ofDim(3, width * height)
 
-    sorted.take(5).foreachPair { case (inA, inB) =>
-      println(s"Reading ${inB.name}...")
+    sorted/* .take(5) */.foreachPair { case (inA, inB) =>
       bufInA      = bufInB // ImageIO.read(inA)
-      bufInB      = ImageIO.read(inB)
       blurA       = blurB // blur(bufInA)
-      blurB       = blur(bufInB)
+      readOne(inB)
       (0 until 3).foreach { ch =>
         val origB = extractChannel(bufInB, ch).flatten
         val chanA = extractChannel(blurA , ch).flatten
         val chanB = extractChannel(blurB , ch).flatten
-//        val mvA   = chanA.toIndexedSeq.meanVariance
-//        val mvB   = chanB.toIndexedSeq.meanVariance
+        meanVarA(ch)  = meanVarB(ch)
+        val meanA     = meanVarA(ch)._1
+        val varianceA = meanVarA(ch)._2
+        meanVarB(ch) = (chanB: IndexedSeq[Double]).meanVariance
+        val meanB     = meanVarB(ch)._1
+        val varianceB = meanVarB(ch)._2
+        // println(f"[$ch] mean $meanB%1.2f, variance $varianceB%1.2f")
+
         var i = 0
         val planeOut = composite(ch)
+        val mul  = varianceA / varianceB
+        // val add0 = meanA - meanB
+        // println(f"offset $add0%1.2f, gain $mul%1.2f")
         (origB, chanA, chanB).zipped.foreach { (orig, a, b) =>
-          val gain = a absdif b
+          val c     = (b - meanB) * mul + meanA
+          val gain0 = a absdif c /* b */
+          val gain  = gain0.atan
           planeOut(i) += orig * gain
           i += 1
         }
@@ -163,6 +198,9 @@ object Experiments extends App {
   }
 
   def average(): Unit = {
+    val inputs  = baseDir.children(f => f.base.startsWith("lapse_short_") && f.ext == "jpg")
+    require(inputs.nonEmpty)
+    println(s"${inputs.size} images.")
     val output = baseDir / "out_lapse_short.png"
     inputs.sortBy(_.name) /* .take(3) */.zipWithIndex.foreach { case (in, idx) =>
       println(s"Reading ${in.name}...")

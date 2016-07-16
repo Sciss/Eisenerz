@@ -14,7 +14,7 @@
 package de.sciss.eisenerz
 
 import com.hopding.jrpicam.RPiCamera
-import com.hopding.jrpicam.enums.{AWB, Encoding}
+import com.hopding.jrpicam.enums.{AWB, Encoding, MeteringMode, Exposure => PiExposure}
 import com.pi4j.io.gpio.GpioFactory
 import de.sciss.file._
 
@@ -44,15 +44,30 @@ object Exposure {
   def run(): Unit = {
     require(outputDir.isDirectory && outputDir.canWrite, s"Cannot write to $outputDir")
 
+    val countSite = outputDir.children(_.name.startsWith("site-")).flatMap { f =>
+      val n = f.name
+      Try(n.substring(5).toInt).toOption
+    } .sorted.lastOption.getOrElse(0) + 1
+
+    val siteDir = outputDir / s"site-$countSite"
+    require(siteDir.mkdir())
+    println(s"Next site will be #$countSite")
+
     val keys  = new KeyMatrix
     val led   = new DualColorLED
 
     val cam = new RPiCamera(outputDir.path)
     // cf. https://raspberrypi.stackexchange.com/questions/14047/
-    cam.setShutter(500000)
+    cam.setShutter(4000) // 500000
+    cam.setISO(100)
+    cam.setExposure(PiExposure.SPORTS)
+    cam.setAWB(AWB.HORIZON)
+    cam.setMeteringMode(MeteringMode.AVERAGE)
+    cam.setHorizontalFlipOn()
+    cam.setVerticalFlipOn()
     // cam.setAWB(AWB.OFF)
-    val width     = 3280/2
-    val height    = 2464/2
+    val width     = 3280 // /2
+    val height    = 2464 // /2
     val encoding  = Encoding.JPG
     cam.setEncoding(encoding)
     cam.turnOffPreview()
@@ -61,13 +76,14 @@ object Exposure {
 
     led.pulseGreen()  // 'ready'
 
-    // XXX TODO --- this could be slow for lots of pictures; perhaps use 'jumping'
-    var count = outputDir.children(_.name.startsWith("frame-")).flatMap { f =>
-      val n = f.name
-      Try(n.substring(6, n.indexOf('.', 6)).toInt).toOption
-    } .sorted.lastOption.getOrElse(0) + 1
+//    // XXX TODO --- this could be slow for lots of pictures; perhaps use 'jumping'
+//    var count = outputDir.children(_.name.startsWith("frame-")).flatMap { f =>
+//      val n = f.name
+//      Try(n.substring(6, n.indexOf('.', 6)).toInt).toOption
+//    } .sorted.lastOption.getOrElse(0) + 1
+    var count = 1
 
-    println(s"Next frame will be #$count")
+//    println(s"Next frame will be #$count")
 
     while (state != StateShutdown) {
       if (state == StateRecord) {
