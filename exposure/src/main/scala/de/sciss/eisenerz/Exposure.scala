@@ -56,7 +56,7 @@ object Exposure {
     val keys  = new KeyMatrix
     val led   = new DualColorLED
 
-    val cam = new RPiCamera(outputDir.path)
+    val cam = new RPiCamera(siteDir.path)
     // cf. https://raspberrypi.stackexchange.com/questions/14047/
     cam.setShutter(4000) // 500000
     cam.setISO(100)
