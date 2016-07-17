@@ -36,7 +36,13 @@ object Experiments {
     require(baseDir.isDirectory)
 //    average()
 //    difference()
-    median()
+//    median()
+    convertTest()
+  }
+
+  def convertTest(): Unit = {
+    levelsBin(in = baseDir / "out_median.bin", out = baseDir / "out_medianColr.png",
+      width = 3280, height = 2464, overLo = 2, overHi = 99, gamma = 1.5)
   }
 
   // compares strings insensitive to case but sensitive to integer numbers
@@ -101,12 +107,12 @@ object Experiments {
   def median(): Unit = {
     val sideLen   = 3 // 2
     val medianLen = sideLen * 2 + 1
-    val thresh    = 0.3333
+    val thresh    = 0.0 // 0.05 // 0.0 // 0.3333
 //    val thresh    = 0.2 / 150
 
     val inputs    = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
     val output    = baseDir / "out_median.png"
-    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) .take(/* 42 */ 240)
+    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) /* .drop(86) */ .take(/* 42 */ 240)
     val numInput  = sorted.size
     require(numInput >= medianLen, s"Need at least $medianLen images")
     println(s"$numInput images.")
@@ -155,6 +161,8 @@ object Experiments {
     val mask  = Array.ofDim[Double](height, width)
     val maskB = Array.ofDim[Double](height, width)
 
+    val medianArr = new Array[Double](medianLen)
+
     for (idx <- (medianLen - 1) until numInput) {
       readOne(sorted(idx), idx = idx % medianLen)
       val cIdx = (idx - sideLen) % medianLen
@@ -167,16 +175,26 @@ object Experiments {
           var x = 0
           while (x < width) {
             val comp = lumC(y)(x)
-            var min  = comp
-            var max  = comp
+//            var min  = comp
+//            var max  = comp
             var i = 0
             while (i < medianLen) {
               val d = luminances(i)(y)(x)
-              if (d < min) min = d
-              if (d > max) max = d
+//              if (d < min) min = d
+//              if (d > max) max = d
+              medianArr(i) = d
               i += 1
             }
-            mask(y)(x) = if (max - min > thresh && (comp == min || comp == max)) 1.0 else 0.0
+            java.util.Arrays.sort(medianArr)
+            val min = medianArr(0)
+            val max = medianArr(medianLen - 1)
+//            mask(y)(x) = if (max - min > thresh && (comp == min || comp == max)) 1.0 else 0.0
+            mask(y)(x) = if (max - min > thresh && (comp == min || comp == max)) {
+              val med = medianArr(sideLen)
+              comp absdif med
+            } else {
+              0.0
+            }
             x += 1
           }
           y += 1
@@ -224,7 +242,12 @@ object Experiments {
         while (y < height) {
           var x = 0
           while (x < width) {
-            compC(y * width + x) += maskB(y)(x) * chan(y)(x)
+            // compC(y * width + x) += maskB(y)(x) * chan(y)(x)
+            val z     = y * width + x
+            val m     = maskB(y)(x)
+            val in    = chan (y)(x)
+            val value = m * in
+            if (compC(z) < value) compC(z) = value
             x += 1
           }
           y += 1
@@ -234,10 +257,54 @@ object Experiments {
 
     writeNormalizedOut(output, perChannel = true)
     val outputBin = output.replaceExt("bin")
-    println(s"Saving binary file to $outputBin...")
-    val af = AudioFile.openWrite(outputBin, AudioFileSpec(numChannels = 3, sampleRate = 44100))
-    af.write(composite.map(_.map(_.toFloat)))
+    println(s"Saving binary file to ${outputBin.name}...")
+    writeBinary(outputBin, composite)
+  }
+
+  def levelsBin(in: File, out: File, width: Int, height: Int, overLo: Int = 2, overHi: Int = 98, gamma: Double = 1.5): Unit = {
+    val gammaInv = 1.0 / gamma
+    composite = readBinary(in)
+    composite.foreach { ch =>
+      val sorted = (ch: IndexedSeq[Double]).sortedT
+      val low    = sorted.percentile(overLo)
+      val high   = sorted.percentile(overHi)
+      var i = 0
+      while (i < ch.length) {
+        ch(i) = ch(i).clip(low, high).linlin(low, high, 0, 1).pow(gammaInv)
+        i += 1
+      }
+    }
+
+    val bufOut = mkBlackImage(width, height)
+    composite.zipWithIndex.foreach { case (plane, ch) =>
+      fillChannel(plane.grouped(width).toArray, bufOut, chan = ch)
+    }
+    ImageIO.write(bufOut, "png", out)
+  }
+
+  def writeBinary(out: File, planes: Array[Array[Double]]): Unit = {
+    val af = AudioFile.openWrite(out, AudioFileSpec(numChannels = 3, sampleRate = 44100))
+    val planesF = planes.map(_.map(_.toFloat))
+    af.write(planesF)
     af.close()
+  }
+
+  def readBinary(in: File): Array[Array[Double]] = {
+    val af      = AudioFile.openRead(in)
+    val planesF = af.buffer(af.numFrames.toInt)
+    af.read(planesF)
+    af.close()
+    val planes  = planesF.map(_.map(_.toDouble))
+    planes
+  }
+
+  def mkBlackImage(width: Int, height: Int): BufferedImage = {
+    val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val gTmp = res.createGraphics()
+    gTmp.setColor(Color.black)
+    gTmp.fillRect(0, 0, width, height)
+    gTmp.dispose()
+    res
   }
 
   def writeNormalizedOut(output: File, perChannel: Boolean = false): Unit = {
@@ -245,14 +312,7 @@ object Experiments {
     val planeMins = composite.map(_.min) // .min
     val planeMaxs = composite.map(_.max) // .max
     // println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
-    val bufOut    = {
-      val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-      val gTmp = res.createGraphics()
-      gTmp.setColor(Color.black)
-      gTmp.fillRect(0, 0, width, height)
-      gTmp.dispose()
-      res
-    }
+    val bufOut = mkBlackImage(width, height)
     if (perChannel) {
       composite.zipWithIndex.foreach { case (plane, ch) =>
         val add0 = -planeMins(ch)
