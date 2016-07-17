@@ -21,6 +21,7 @@ import com.jhlabs.image.SmartBlurFilter
 import de.sciss.file._
 import de.sciss.kollflitz.Ops._
 import de.sciss.numbers.Implicits._
+import de.sciss.synth.io.{AudioFile, AudioFileSpec}
 
 import scala.collection.breakOut
 
@@ -33,12 +34,9 @@ object Experiments {
 
   def main(args: Array[String]): Unit = {
     require(baseDir.isDirectory)
-    // average()
-    difference()
-//    val i = compareName("frame-112", "frame-99")
-//    println(i)
-//    val j = compareName("frame-106", "frame-1")
-//    println(j)
+//    average()
+//    difference()
+    median()
   }
 
   // compares strings insensitive to case but sensitive to integer numbers
@@ -100,12 +98,160 @@ object Experiments {
     n1 - n2
   }
 
+  def median(): Unit = {
+    val sideLen   = 2
+    val medianLen = sideLen * 2 + 1
+    val thresh    = 0.2
+
+    val inputs    = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
+    val output    = baseDir / "out_median.png"
+    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) // .take(40)
+    val numInput  = sorted.size
+    require(numInput >= medianLen, s"Need at least $medianLen images")
+    println(s"$numInput images.")
+
+    val fltBlur = new SmartBlurFilter
+    fltBlur.setRadius(7)
+    fltBlur.setThreshold(20)
+    // val fltHisto  = new Histogram
+
+    def blur(in: BufferedImage): BufferedImage = fltBlur.filter(in, null)
+
+    val images      = new Array[BufferedImage]       (medianLen)
+    val luminances  = new Array[Array[Array[Double]]](medianLen)
+
+    def readOne(in: File, idx: Int): Unit = {
+      println(s"Reading ${in.name}...")
+      val bufIn   = ImageIO.read(in)
+      val blurImg = blur(bufIn)
+      val lum     = extractBrightness(blurImg)
+      images    (idx) = bufIn
+      luminances(idx) = lum
+    }
+
+    for (idx <- 0 until (medianLen - 1)) {
+      readOne(sorted(idx), idx = idx)
+    }
+
+    width     = images(0).getWidth
+    height    = images(0).getHeight
+    composite = Array.ofDim(3, width * height)
+    
+    val mask  = Array.ofDim[Double](height, width)
+    val maskB = Array.ofDim[Double](height, width)
+
+    for (idx <- (medianLen - 1) until numInput) {
+      readOne(sorted(idx), idx = idx % medianLen)
+      val cIdx = (idx - sideLen) % medianLen
+      val lumC = luminances(cIdx)
+      
+      // calculate mask
+      {
+        var y = 0
+        while (y < height) {
+          var x = 0
+          while (x < width) {
+            val comp = lumC(y)(x)
+            var min  = comp
+            var max  = comp
+            var i = 0
+            while (i < medianLen) {
+              val d = luminances(i)(y)(x)
+              if (d < min) min = d
+              if (d > max) max = d
+              i += 1
+            }
+            mask(y)(x) = if (max - min > thresh && (comp == min || comp == max)) 1.0 else 0.0
+            x += 1
+          }
+          y += 1
+        }
+      }
+      // blur mask
+      for (_ <- 0 until 2) {
+        var y = 0
+        while (y < height) {
+          var x = 0
+          while (x < width) {
+            var sum = 0.0
+            var cnt = 0
+            var yi = math.max(0, y - 1)
+            val ys = math.min(height, y + 2)
+            while (yi < ys) {
+              var xi = math.max(0, x - 1)
+              val xs = math.min(width, x + 2)
+              while (xi < xs) {
+                sum += mask(yi)(xi)
+                cnt += 1
+                xi += 1
+              }
+              yi += 1
+            }
+            maskB(y)(x) = sum / cnt
+            x += 1
+          }
+          y += 1
+        }
+
+        // copy back for recursion
+        y = 0
+        while (y < height) {
+          System.arraycopy(maskB(y), 0, mask(y), 0, width)
+          y += 1
+        }
+      } // recursion
+
+      // mix to composite
+      (0 until 3).foreach { ch =>
+        val chan  = extractChannel(images(cIdx), ch)
+        val compC = composite(ch)
+        var y = 0
+        while (y < height) {
+          var x = 0
+          while (x < width) {
+            compC(y * width + x) += maskB(y)(x) * chan(y)(x)
+            x += 1
+          }
+          y += 1
+        }
+      }
+    }
+
+    writeNormalizedOut(output)
+    val outputBin = output.replaceExt("bin")
+    println(s"Saving binary file to $outputBin...")
+    val af = AudioFile.openWrite(outputBin, AudioFileSpec(numChannels = 3, sampleRate = 44100))
+    af.write(composite.map(_.map(_.toFloat)))
+    af.close()
+  }
+
+  def writeNormalizedOut(output: File): Unit = {
+    println(s"Writing ${output.name}...")
+    val planeMin  = composite.map(_.min).min
+    val planeMax  = composite.map(_.max).max
+    println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
+    val bufOut    = {
+      val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+      val gTmp = res.createGraphics()
+      gTmp.setColor(Color.black)
+      gTmp.fillRect(0, 0, width, height)
+      gTmp.dispose()
+      res
+    }
+    val add0 = -planeMin
+    val mul  = 1.0 / (planeMax - planeMin)
+    composite.zipWithIndex.foreach { case (plane, ch) =>
+      fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
+    }
+    ImageIO.write(bufOut, "png", output)
+  }
+
   def difference(): Unit = {
     val inputs = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
     require(inputs.nonEmpty)
     println(s"${inputs.size} images.")
     val output  = baseDir / "out_diff.png"
-    val sorted  = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0)     .take(20)
+    val sorted  = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) .take(20)
     // sorted.foreach(println)
 
     val fltBlur = new SmartBlurFilter
@@ -176,25 +322,8 @@ object Experiments {
       bufInA.flush()
       blurA .flush()
     }
-    println(s"Writing ${output.name}...")
-    val planeMin  = composite.map(_.min).min
-    val planeMax  = composite.map(_.max).max
-    println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
-    val bufOut    = {
-      val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-      val gTmp = res.createGraphics()
-      gTmp.setColor(Color.black)
-      gTmp.fillRect(0, 0, width, height)
-      gTmp.dispose()
-      res
-    }
-    val add0      = -planeMin
-    val mul       = 1.0 / (planeMax - planeMin)
-    composite.zipWithIndex.foreach { case (plane, ch) =>
-      fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
-    }
-    ImageIO.write(bufOut, "png", output)
-    sys.exit()
+
+    writeNormalizedOut(output)
   }
 
   def average(): Unit = {
@@ -220,25 +349,8 @@ object Experiments {
       }
       bufIn.flush()
     }
-    println(s"Writing ${output.name}...")
-    val planeMin  = composite.map(_.min).min
-    val planeMax  = composite.map(_.max).max
-    println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
-    val bufOut    = {
-      val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-      val gTmp = res.createGraphics()
-      gTmp.setColor(Color.black)
-      gTmp.fillRect(0, 0, width, height)
-      gTmp.dispose()
-      res
-    }
-    val add0      = -planeMin
-    val mul       = 1.0 / (planeMax - planeMin)
-    composite.zipWithIndex.foreach { case (plane, ch) =>
-      fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
-    }
-    ImageIO.write(bufOut, "png", output)
-    sys.exit()
+
+    writeNormalizedOut(output)
   }
 
   /** Adds input to output. */
@@ -259,6 +371,20 @@ object Experiments {
       Array.tabulate(in.getWidth) { x =>
         val i = (in.getRGB(x, y) >>> shift) & 0xFF
         i.toDouble / 0xFF
+      }
+    }
+  }
+
+  // cf. https://stackoverflow.com/questions/596216
+  def extractBrightness(in: BufferedImage): Array[Array[Double]] = {
+    Array.tabulate(in.getHeight) { y =>
+      Array.tabulate(in.getWidth) { x =>
+        val rgb = in.getRGB(x, y)
+        val r   = ((rgb & 0xFF0000) >> 16) / 255f
+        val g   = ((rgb & 0x00FF00) >>  8) / 255f
+        val b   = ( rgb & 0x0000FF       ) / 255f
+        val lum = (0.299 * r.squared + 0.587 * g.squared + 0.114 * b.squared).sqrt
+        lum
       }
     }
   }
