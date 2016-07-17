@@ -99,13 +99,14 @@ object Experiments {
   }
 
   def median(): Unit = {
-    val sideLen   = 2
+    val sideLen   = 3 // 2
     val medianLen = sideLen * 2 + 1
-    val thresh    = 0.2
+    val thresh    = 0.3333
+//    val thresh    = 0.2 / 150
 
     val inputs    = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
     val output    = baseDir / "out_median.png"
-    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) // .take(40)
+    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) .take(/* 42 */ 240)
     val numInput  = sorted.size
     require(numInput >= medianLen, s"Need at least $medianLen images")
     println(s"$numInput images.")
@@ -125,6 +126,20 @@ object Experiments {
       val bufIn   = ImageIO.read(in)
       val blurImg = blur(bufIn)
       val lum     = extractBrightness(blurImg)
+//      val (mean, variance) = (lum.flatMap(_.toIndexedSeq)(breakOut): IndexedSeq[Double]).meanVariance
+//      val stdDev = math.sqrt(variance)
+////      println(f"mean $mean%1.2f, stddev $stdDev%1.2f")
+//      var y = 0
+//      while (y < height) {
+//        val ch = lum(y)
+//        var x = 0
+//        while (x < width) {
+//          ch(x) = (ch(x) - mean) / stdDev
+//          x += 1
+//        }
+//        y += 1
+//      }
+
       images    (idx) = bufIn
       luminances(idx) = lum
     }
@@ -168,7 +183,7 @@ object Experiments {
         }
       }
       // blur mask
-      for (_ <- 0 until 2) {
+      for (_ <- 0 until 3 /* 2 */) {
         var y = 0
         while (y < height) {
           var x = 0
@@ -217,7 +232,7 @@ object Experiments {
       }
     }
 
-    writeNormalizedOut(output)
+    writeNormalizedOut(output, perChannel = true)
     val outputBin = output.replaceExt("bin")
     println(s"Saving binary file to $outputBin...")
     val af = AudioFile.openWrite(outputBin, AudioFileSpec(numChannels = 3, sampleRate = 44100))
@@ -225,11 +240,11 @@ object Experiments {
     af.close()
   }
 
-  def writeNormalizedOut(output: File): Unit = {
+  def writeNormalizedOut(output: File, perChannel: Boolean = false): Unit = {
     println(s"Writing ${output.name}...")
-    val planeMin  = composite.map(_.min).min
-    val planeMax  = composite.map(_.max).max
-    println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
+    val planeMins = composite.map(_.min) // .min
+    val planeMaxs = composite.map(_.max) // .max
+    // println(f"Channel values: min = $planeMin%1.2f, max = $planeMax%1.2f")
     val bufOut    = {
       val res = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
       val gTmp = res.createGraphics()
@@ -238,10 +253,20 @@ object Experiments {
       gTmp.dispose()
       res
     }
-    val add0 = -planeMin
-    val mul  = 1.0 / (planeMax - planeMin)
-    composite.zipWithIndex.foreach { case (plane, ch) =>
-      fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
+    if (perChannel) {
+      composite.zipWithIndex.foreach { case (plane, ch) =>
+        val add0 = -planeMins(ch)
+        val mul  = 1.0 / (planeMaxs(ch) - planeMins(ch))
+        fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
+      }
+    } else {
+      val planeMin = planeMins.min
+      val planeMax = planeMaxs.max
+      val add0 = -planeMin
+      val mul  = 1.0 / (planeMax - planeMin)
+      composite.zipWithIndex.foreach { case (plane, ch) =>
+        fillChannel(plane.grouped(width).toArray, bufOut, chan = ch, add = add0, mul = mul)
+      }
     }
     ImageIO.write(bufOut, "png", output)
   }
