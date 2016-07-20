@@ -58,9 +58,10 @@ object Accelerate {
 
     play {
       import ugen._
-      // val noise     = WhiteNoise.ar(0.25)
-      val noise     = SinOsc.ar(100) * 0.25
-      val flt       = Convolution2.ar(in = noise, kernel = bufKernel.id, frameSize = kernel.length)
+//      val in        = WhiteNoise.ar(0.25)
+//      val in        = SinOsc.ar(100) * 0.25
+      val in        = PhysicalIn.ar(0)
+      val flt       = Convolution2.ar(in = in, kernel = bufKernel.id, frameSize = kernel.length)
       val fltK      = A2K.kr(flt)
       RecordBuf.kr(in = fltK, buf = bufLoop.id, offset = 0, recLevel = 1, preLevel = 0, run = 1, loop = 1, trig = 1)
       val bufValid  = Sweep.ar(trig = 0, speed = sampleRate.toDouble / smpIncr).min(loopLen)
