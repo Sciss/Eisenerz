@@ -39,28 +39,24 @@ object Accelerate {
   }
 
   def watchFIFO(): Unit = {
-//    val prev = System.out
-//
-//    val outputStream: OutputStream = new OutputStream {
-//      override def write(b: Array[Byte], off: Int, len: Int): Unit = {
-//        prev.write(b, off, len)
-//        val str = new String(b, off, len)
-//        var j = 0
-//        var i = str.indexOf('\n', j)
-//        while (i >= 0) {
-//
-//        }
-//      }
-//
-//      def write(b: Int): Unit = write(Array(b.toByte), 0, 1)
-//    }
-//
-//    val printStream = new PrintStream(outputStream, true)
-
+    // Ok, here is the tricky bit:
+    // ScalaCollider redirects the output stream
+    // of the scsynth process, exclusively calling
+    // `println`, so we actually just have to look
+    // for the underlying calls to `println(x: Any)`.
+    // In the implementation that calls `print(x: String)` followed by newline.
+    // So in order to check for message, what we do here is override
+    // just `print(x: String)`. We then replace `Console.out`.
     val printStream = new PrintStream(System.out, true) {
-      override def println(x: String): Unit = super.println(s"FOO: $x")
+      override def print(x: String): Unit = {
+//        super.print(s"FOO: $x")
+        super.print(x)
+        if (x.contains("command FIFO full")) {
+          super.print("--- DETECTED!")  // XXX TODO
+        }
+      }
     }
-    System.setOut(printStream)
+    Console.setOut(printStream) // yes, deprecated my a**
   }
 
   def run(config: Config): Unit = {
