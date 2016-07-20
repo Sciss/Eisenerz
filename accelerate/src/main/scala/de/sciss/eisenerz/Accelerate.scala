@@ -13,29 +13,38 @@
 
 package de.sciss.eisenerz
 
-import java.io.{OutputStream, PrintStream}
+import java.io.{PrintStream, RandomAccessFile}
 
 import de.sciss.file._
 import de.sciss.osc
 import de.sciss.synth._
-import de.sciss.synth.io.AudioFile
+import de.sciss.synth.io.{AudioFile, AudioFileSpec, AudioFileType, SampleFormat}
 
+import scala.concurrent.ExecutionContext
 import scala.math.Pi
 import scala.util.control.NonFatal
 
 /*
 
-  TODO: detect 'command FIFO full'
+  Note: 'command FIFO full'
   - might be that jackd actually has a problem and we need to kill it as well
   - and restart qjackctl
   - we try now with wifi disabled
 
  */
 object Accelerate {
-  final case class Config(snapshotFile: File = file("/media/pi/accel/snapshot.irc"))
+  final case class Config(snapshotFile: File = file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc",
+                          loopDurMinutes: Int = 1 /* 20 */) {
+    val loopLen = loopDurMinutes * 60 * sampleRate
+  }
 
   def main(args: Array[String]): Unit = {
     run(Config())
+  }
+
+  def restartAfterFailure(): Unit = {
+//    import scala.sys.process._
+//    Seq("sudo", "reboot", "now").!
   }
 
   def watchFIFO(): Unit = {
@@ -52,7 +61,8 @@ object Accelerate {
 //        super.print(s"FOO: $x")
         super.print(x)
         if (x.contains("command FIFO full")) {
-          super.print("--- DETECTED!")  // XXX TODO
+          super.print("--- DETECTED!")
+          restartAfterFailure()
         }
       }
     }
@@ -81,11 +91,10 @@ object Accelerate {
   }
 
   private[this] val smpIncr         = 32
-  private[this] val loopDurMinutes  = 20
   private[this] val sampleRate      = 44100
-  private[this] val loopLen         = loopDurMinutes * 60 * sampleRate
 
   private def serverStarted(s: Server, config: Config): Unit = {
+    import config._
     println("Server started.")
 
     val bufKernel = Buffer(s)
@@ -95,8 +104,6 @@ object Accelerate {
     val bufLoop   = Buffer(s)
     bufLoop.alloc(numFrames = loopLen, numChannels = 1)
     bufLoop.zero()
-
-    import config._
 
     var oldFrames = 0
     if (snapshotFile.exists()) {
@@ -109,8 +116,33 @@ object Accelerate {
         }
       } catch {
         case NonFatal(ex) =>
+          println("While reading snapshot spec:")
+          ex.printStackTrace()
+          snapshotFile.delete()
+      }
+    }
+
+    println(s"bufLoop: oldFrames = $oldFrames, numFrames = $loopLen")
+
+    if (!snapshotFile.exists()) {
+      try {
+        val af = AudioFile.openWrite(snapshotFile,
+          AudioFileSpec(AudioFileType.IRCAM, SampleFormat.Float, numChannels = 1, sampleRate = 44100))
+        af.close()
+      } catch {
+        case NonFatal(ex) =>
+          println("While creating empty snapshot:")
           ex.printStackTrace()
       }
+    }
+
+    val raf: RandomAccessFile = try {
+      new RandomAccessFile(snapshotFile, "rws")
+    } catch {
+      case NonFatal(ex) =>
+        println("While opening snapshot for writing:")
+        ex.printStackTrace()
+        null
     }
 
     val mainSynth = play {
@@ -120,13 +152,75 @@ object Accelerate {
       val in        = PhysicalIn.ar(0)
       val flt       = Convolution2.ar(in = in, kernel = bufKernel.id, frameSize = kernel.length)
       val fltK      = A2K.kr(flt)
-      RecordBuf.kr(in = fltK, buf = bufLoop.id, offset = 0, recLevel = 1, preLevel = 0, run = 1, loop = 1, trig = 1)
+      val recOff    = oldFrames
+      RecordBuf.kr(in = fltK, buf = bufLoop.id, offset = recOff, recLevel = 1, preLevel = 0, run = 1, loop = 1, trig = 1)
       val bufValid  = Sweep.ar(trig = 0, speed = sampleRate.toDouble / smpIncr).min(loopLen)
       // val playTrig  = Impulse.ar(1.0/10) // XXX TODO
       val playTrig  = Impulse.ar(sampleRate / bufValid.max(1))
       val sig       = PlayBuf.ar(numChannels = 1, buf = bufLoop.id, speed = 1.0, trig = playTrig, loop = 1)
+      val saveTrig  = Impulse.ar(1.0) - Impulse.ar(0)
+      val saveCount = PulseCount.ar(saveTrig)
+      SendTrig.ar(trig = saveTrig, value = saveCount)
 
       Out.ar(0, Pan2.ar(sig))
+    }
+    val nodeID = mainSynth.id
+
+//    s.dumpOSC()
+
+    def getAndSave(start: Int, stop: Int): Unit = {
+      val range = start until stop
+      println(s"getAndSave($start, $stop)")
+      val fut = bufLoop.getn(range)
+      import ExecutionContext.Implicits.global
+      fut.foreach { vec =>
+        // println(vec.mkString("Vec(", ", ", ")"))
+        val fileOffset  = start * 4 + 1024
+        val sz          = vec.size
+        val arr         = new Array[Byte](sz * 4)
+        var i = 0
+        var j = 0
+        while (i < sz) {
+          val k = java.lang.Float.floatToIntBits(vec(i))
+//          arr(j) = ((k >>> 24) & 0xFF).toByte; j += 1
+//          arr(j) = ((k >>> 16) & 0xFF).toByte; j += 1
+//          arr(j) = ((k >>>  8) & 0xFF).toByte; j += 1
+//          arr(j) = ( k         & 0xFF).toByte; j += 1
+
+          // little endian:
+          arr(j) = ( k         & 0xFF).toByte; j += 1
+          arr(j) = ((k >>>  8) & 0xFF).toByte; j += 1
+          arr(j) = ((k >>> 16) & 0xFF).toByte; j += 1
+          arr(j) = ((k >>> 24) & 0xFF).toByte; j += 1
+          i += 1
+        }
+        raf.synchronized {
+          if (raf.getFilePointer != fileOffset) {
+            raf.seek(fileOffset)
+          }
+          raf.write(arr)
+        }
+      }
+    }
+
+    var lastWritten: Long = oldFrames
+
+    if (raf != null) message.Responder.add(s) {
+      case message.Trigger(`nodeID`, 0, saveCountF) =>
+        val saveCount       = saveCountF.toInt
+        val framesRecorded  = saveCount * 44100L / smpIncr
+        val stopFrame       = oldFrames + framesRecorded
+        val start0          = (lastWritten % loopLen).toInt
+        val end0            = (stopFrame   % loopLen).toInt
+        if (end0 > start0) {
+          getAndSave(start0, end0)
+        } else if (end0 < start0) {
+          getAndSave(start0, loopLen)
+          getAndSave(     0, end0   )
+        }
+        lastWritten = stopFrame
+
+        println(s"Save count: $saveCount")
     }
   }
 
