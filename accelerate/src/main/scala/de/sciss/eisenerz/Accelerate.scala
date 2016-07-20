@@ -13,21 +13,62 @@
 
 package de.sciss.eisenerz
 
+import java.io.{OutputStream, PrintStream}
+
+import de.sciss.file._
 import de.sciss.osc
 import de.sciss.synth._
+import de.sciss.synth.io.AudioFile
 
 import scala.math.Pi
+import scala.util.control.NonFatal
 
+/*
+
+  TODO: detect 'command FIFO full'
+  - might be that jackd actually has a problem and we need to kill it as well
+  - and restart qjackctl
+  - we try now with wifi disabled
+
+ */
 object Accelerate {
-  final case class Config()
+  final case class Config(snapshotFile: File = file("/media/pi/accel/snapshot.irc"))
 
   def main(args: Array[String]): Unit = {
     run(Config())
   }
 
+  def watchFIFO(): Unit = {
+//    val prev = System.out
+//
+//    val outputStream: OutputStream = new OutputStream {
+//      override def write(b: Array[Byte], off: Int, len: Int): Unit = {
+//        prev.write(b, off, len)
+//        val str = new String(b, off, len)
+//        var j = 0
+//        var i = str.indexOf('\n', j)
+//        while (i >= 0) {
+//
+//        }
+//      }
+//
+//      def write(b: Int): Unit = write(Array(b.toByte), 0, 1)
+//    }
+//
+//    val printStream = new PrintStream(outputStream, true)
+
+    val printStream = new PrintStream(System.out, true) {
+      override def println(x: String): Unit = super.println(s"FOO: $x")
+    }
+    System.setOut(printStream)
+  }
+
   def run(config: Config): Unit = {
     import scala.sys.process._
     Seq("killall", "scsynth").!
+
+    // import config._
+    // if (!snapshotFile.parent.isDirectory) snapshotFile.parent.mkdirs()
 
     val sCfg = Server.Config()
     sCfg.transport          = osc.TCP
@@ -38,7 +79,9 @@ object Accelerate {
     sCfg.deviceName         = Some("ScalaCollider")
 
     println("Booting server...")
-    Server.run(sCfg)(serverStarted)
+    watchFIFO()
+
+    Server.run(sCfg)(serverStarted(_, config))
   }
 
   private[this] val smpIncr         = 32
@@ -46,7 +89,7 @@ object Accelerate {
   private[this] val sampleRate      = 44100
   private[this] val loopLen         = loopDurMinutes * 60 * sampleRate
 
-  private def serverStarted(s: Server): Unit = {
+  private def serverStarted(s: Server, config: Config): Unit = {
     println("Server started.")
 
     val bufKernel = Buffer(s)
@@ -54,9 +97,27 @@ object Accelerate {
     val kernel    = mkFilterKernel()
     bufKernel.alloc(numFrames = kernel.length, numChannels = 1, completion = bufKernel.setnMsg(kernel))
     val bufLoop   = Buffer(s)
-    bufLoop.alloc(numFrames = loopLen, numChannels = 1, completion = bufLoop.zeroMsg)
+    bufLoop.alloc(numFrames = loopLen, numChannels = 1)
+    bufLoop.zero()
 
-    play {
+    import config._
+
+    var oldFrames = 0
+    if (snapshotFile.exists()) {
+      try {
+        val spec      = AudioFile.readSpec(snapshotFile)
+        val numFrames = math.min(loopLen, spec.numFrames).toInt
+        if (spec.numChannels == 1 && numFrames > 0) {
+          bufLoop.read(path = snapshotFile.path, fileStartFrame = 0, numFrames = numFrames, bufStartFrame = 0)
+          oldFrames = numFrames
+        }
+      } catch {
+        case NonFatal(ex) =>
+          ex.printStackTrace()
+      }
+    }
+
+    val mainSynth = play {
       import ugen._
 //      val in        = WhiteNoise.ar(0.25)
 //      val in        = SinOsc.ar(100) * 0.25
