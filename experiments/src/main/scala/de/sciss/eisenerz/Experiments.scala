@@ -26,7 +26,7 @@ import de.sciss.synth.io.{AudioFile, AudioFileSpec}
 import scala.collection.breakOut
 
 object Experiments {
-  val baseDir = userHome / "Documents" / "projects" / "Eisenerz" / "image_work2"
+  val baseDir = userHome / "Documents" / "projects" / "Eisenerz" / "image_work10"
 
   var composite: Array[Array[Double]] = _
   var width : Int = _
@@ -36,13 +36,13 @@ object Experiments {
     require(baseDir.isDirectory)
 //    average()
 //    difference()
-//    median()
-    convertTest()
+    median()
+//    convertTest()
   }
 
   def convertTest(): Unit = {
     levelsBin(in = baseDir / "out_median.bin", out = baseDir / "out_medianColr.png",
-      width = 3280, height = 2464, overLo = 2, overHi = 99, gamma = 1.5)
+      width = 3280, height = 2464, overLo = 3, overHi = 99.9, gamma = 1.0 /* 1.125 */)
   }
 
   // compares strings insensitive to case but sensitive to integer numbers
@@ -107,12 +107,12 @@ object Experiments {
   def median(): Unit = {
     val sideLen   = 3 // 2
     val medianLen = sideLen * 2 + 1
-    val thresh    = 0.0 // 0.05 // 0.0 // 0.3333
+    val thresh    = 0.2 // 0.01 // 0.05 // 0.0 // 0.3333
 //    val thresh    = 0.2 / 150
 
     val inputs    = baseDir.children(f => f.base.startsWith("frame-") && f.ext == "jpg")
     val output    = baseDir / "out_median.png"
-    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) /* .drop(86) */ .take(/* 42 */ 240)
+    val sorted    = inputs.sortWith((a, b) => compareName(a.name, b.name) < 0) // /* .drop(86) */ .take(/* 42 */ 240)
     val numInput  = sorted.size
     require(numInput >= medianLen, s"Need at least $medianLen images")
     println(s"$numInput images.")
@@ -261,13 +261,15 @@ object Experiments {
     writeBinary(outputBin, composite)
   }
 
-  def levelsBin(in: File, out: File, width: Int, height: Int, overLo: Int = 2, overHi: Int = 98, gamma: Double = 1.5): Unit = {
+  def percentile[A](xs: IndexedSeq[A], n: Double): A = xs(((xs.size - 1) * n / 100.0 + 0.5).toInt)
+
+  def levelsBin(in: File, out: File, width: Int, height: Int, overLo: Double = 2, overHi: Double = 98, gamma: Double = 1.5): Unit = {
     val gammaInv = 1.0 / gamma
     composite = readBinary(in)
     composite.foreach { ch =>
       val sorted = (ch: IndexedSeq[Double]).sortedT
-      val low    = sorted.percentile(overLo)
-      val high   = sorted.percentile(overHi)
+      val low    = percentile(sorted, overLo)
+      val high   = percentile(sorted, overHi)
       var i = 0
       while (i < ch.length) {
         ch(i) = ch(i).clip(low, high).linlin(low, high, 0, 1).pow(gammaInv)
