@@ -31,10 +31,11 @@ import scala.util.control.NonFatal
   - and restart qjackctl
   - we try now with wifi disabled
 
+  TODO: "Cannot open ScalaCollider client\ncould not initialize audio."
  */
 object Accelerate {
   final case class Config(snapshotFile: File = file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc",
-                          loopDurMinutes: Int = 1 /* 20 */) {
+                          loopDurMinutes: Int = 1 /* 20 */, debug: Boolean = false) {
     val loopLen = loopDurMinutes * 60 * sampleRate
   }
 
@@ -154,7 +155,7 @@ object Accelerate {
       val fltK      = A2K.kr(flt)
       val recOff    = oldFrames
       RecordBuf.kr(in = fltK, buf = bufLoop.id, offset = recOff, recLevel = 1, preLevel = 0, run = 1, loop = 1, trig = 1)
-      val bufValid  = Sweep.ar(trig = 0, speed = sampleRate.toDouble / smpIncr).min(loopLen)
+      val bufValid  = (Sweep.ar(trig = 0, speed = sampleRate.toDouble / smpIncr) + oldFrames).min(loopLen)
       // val playTrig  = Impulse.ar(1.0/10) // XXX TODO
       val playTrig  = Impulse.ar(sampleRate / bufValid.max(1))
       val sig       = PlayBuf.ar(numChannels = 1, buf = bufLoop.id, speed = 1.0, trig = playTrig, loop = 1)
@@ -170,7 +171,7 @@ object Accelerate {
 
     def getAndSave(start: Int, stop: Int): Unit = {
       val range = start until stop
-      println(s"getAndSave($start, $stop)")
+//      println(s"getAndSave($start, $stop)")
       val fut = bufLoop.getn(range)
       import ExecutionContext.Implicits.global
       fut.foreach { vec =>
@@ -220,7 +221,7 @@ object Accelerate {
         }
         lastWritten = stopFrame
 
-        println(s"Save count: $saveCount")
+        if (debug) println(s"Save count: $saveCount")
     }
   }
 
