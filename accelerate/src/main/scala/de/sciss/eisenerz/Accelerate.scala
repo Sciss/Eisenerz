@@ -38,12 +38,15 @@ import scala.util.control.NonFatal
 
  */
 object Accelerate {
-  final case class Config(snapshotFile    : File = file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc",
+  // file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc"
+  // N.B.: if we run with `sudo` (which is needed for GPIO), the user-name is _not_ pi!
+  final case class Config(snapshotFile    : File = file("/media/pi/accel/snapshot.irc"),
                           loopDurMinutes  : Int = 20,
                           ignoreGPIO      : Boolean = false,
                           debug           : Boolean = false,
                           // runDurMinutes: Int = 0,
-                          ignoreXRUNs     : Boolean = false
+                          ignoreXRUNs     : Boolean = false,
+                          sampleRate      : Int     = 44100
                          ) {
     val loopLen: Int = loopDurMinutes * 60 * sampleRate
   }
@@ -130,7 +133,7 @@ object Accelerate {
     sCfg.transport          = osc.TCP
     sCfg.inputBusChannels   = 1
     sCfg.outputBusChannels  = 2
-    sCfg.sampleRate         = sampleRate
+    sCfg.sampleRate         = config.sampleRate
     sCfg.blockSize          = smpIncr // ! so we can use decimation through ar -> kr
     sCfg.deviceName         = Some("ScalaCollider")
 
@@ -141,7 +144,7 @@ object Accelerate {
   }
 
   private[this] val smpIncr         = 32
-  private[this] val sampleRate      = 44100
+  // private[this] val sampleRate      = 44100
 
   private def serverStarted(s: Server, config: Config): Unit = {
     import config._
