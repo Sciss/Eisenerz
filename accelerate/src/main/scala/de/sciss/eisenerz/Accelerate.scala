@@ -34,7 +34,10 @@ import scala.util.control.NonFatal
 
   TODO: "Cannot open ScalaCollider client\ncould not initialize audio."
 
-  - if snapshot is "full" use a random offset to avoid keeping always the same end
+  - if snapshot is "full" use a random (write) offset to avoid keeping always the same end
+
+  - if (config.compander)
+      Compander.ar(in, in, thresh = (-24).dbamp, ratioBelow = 1, ratioAbove = 0.33, attack = 0.2, release = 1)
 
  */
 object Accelerate {
