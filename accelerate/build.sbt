@@ -17,9 +17,8 @@ lazy val commonSettings = Seq(
     "de.sciss"          %% "fileutil"                   % "1.1.1",
     "de.sciss"          %% "numbers"                    % "0.1.1",
     // "de.sciss"          %% "kollflitz"                  % "0.2.0",
-    // "de.sciss"          %  "submin"                     % "0.2.1",
-    "com.github.scopt"  %% "scopt"                      % "3.4.0"
-    // "com.pi4j"          %  "pi4j-core"                  % "1.0",
+    "com.github.scopt"  %% "scopt"                      % "3.4.0",
+    "com.pi4j"          %  "pi4j-core"                  % "1.0"
     // "de.sciss"          %  "jrpicam"                    % "0.1.0"
   ),
   target in assembly := baseDirectory.value

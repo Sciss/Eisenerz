@@ -19,6 +19,7 @@ import de.sciss.file._
 import de.sciss.osc
 import de.sciss.synth._
 import de.sciss.synth.io.{AudioFile, AudioFileSpec, AudioFileType, SampleFormat}
+import scopt.OptionParser
 
 import scala.concurrent.ExecutionContext
 import scala.math.Pi
@@ -32,23 +33,46 @@ import scala.util.control.NonFatal
   - we try now with wifi disabled
 
   TODO: "Cannot open ScalaCollider client\ncould not initialize audio."
+
+  - if snapshot is "full" use a random offset to avoid keeping always the same end
+
  */
 object Accelerate {
-  final case class Config(snapshotFile: File = file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc",
-                          loopDurMinutes: Int = 1 /* 20 */, debug: Boolean = false) {
-    val loopLen = loopDurMinutes * 60 * sampleRate
+  final case class Config(snapshotFile    : File = file("/") / "media" / sys.props("user.name") / "accel" /"snapshot.irc",
+                          loopDurMinutes  : Int = 20,
+                          ignoreGPIO      : Boolean = false,
+                          debug           : Boolean = false,
+                          // runDurMinutes: Int = 0,
+                          ignoreXRUNs     : Boolean = false
+                         ) {
+    val loopLen: Int = loopDurMinutes * 60 * sampleRate
   }
 
+//  private[this] var SHUTDOWN = Long.MaxValue
+
   def main(args: Array[String]): Unit = {
-    run(Config())
+    val parser = new OptionParser[Config]("Accelerate") {
+      opt[File]('f', "snapshot")     text "Snapshot file" action { (x, c) => c.copy(snapshotFile = x) }
+      opt[Int ]('l', "loop")         text "Loop duration in minutes" action { (x, c) => c.copy(loopDurMinutes = x) }
+//      opt[Int ]('d', "shutdown")     text "Run duration before shutting down in minutes (zero for no timeout)" action { (x, c) => c.copy(runDurMinutes = x) }
+      opt[Unit]('g', "ignore-gpio")  text "Ignore GPIO (when running on non-RaspPi)" action { (_, c) => c.copy(ignoreGPIO = true) }
+      opt[Unit]('y', "debug")        text "Enable debug logging" action { (_, c) => c.copy(debug = true) }
+      opt[Unit]('x', "ignore-xruns") text "Disable reboot upon seeing XRUNs" action { (_, c) => c.copy(ignoreXRUNs = true) }
+    }
+    parser.parse(args, Config()).fold(sys.exit(1))(run)
   }
 
   def restartAfterFailure(): Unit = {
-//    import scala.sys.process._
-//    Seq("sudo", "reboot", "now").!
+    import scala.sys.process._
+    Seq("sudo", "reboot", "now").!
   }
 
-  def watchFIFO(): Unit = {
+  def shutdown(): Unit = {
+    import scala.sys.process._
+    Seq("sudo", "shutdown", "now").!
+  }
+
+  def watchFIFO(config: Config): Unit = {
     // Ok, here is the tricky bit:
     // ScalaCollider redirects the output stream
     // of the scsynth process, exclusively calling
@@ -63,16 +87,41 @@ object Accelerate {
         super.print(x)
         if (x.contains("command FIFO full")) {
           super.print("--- DETECTED!")
-          restartAfterFailure()
+          if (!config.ignoreXRUNs) restartAfterFailure()
         }
       }
     }
     Console.setOut(printStream) // yes, deprecated my a**
   }
 
+  private[this] var led : DualColorLED = null
+  private[this] var keys: KeyMatrix    = null
+
   def run(config: Config): Unit = {
     import scala.sys.process._
     Seq("killall", "scsynth").!
+
+//    if (config.runDurMinutes > 0) {
+//      SHUTDOWN = System.currentTimeMillis() + (config.runDurMinutes * 60 * 1000L)
+//    }
+
+    if (!config.ignoreGPIO) {
+      try {
+        led = new DualColorLED
+      } catch {
+        case NonFatal(ex) =>
+          println("While initializing LED:")
+          ex.printStackTrace()
+      }
+
+      try {
+        keys = new KeyMatrix
+      } catch {
+        case NonFatal(ex) =>
+          println("While initializing key matrix:")
+          ex.printStackTrace()
+      }
+    }
 
     // import config._
     // if (!snapshotFile.parent.isDirectory) snapshotFile.parent.mkdirs()
@@ -86,7 +135,7 @@ object Accelerate {
     sCfg.deviceName         = Some("ScalaCollider")
 
     println("Booting server...")
-    watchFIFO()
+    watchFIFO(config)
 
     Server.run(sCfg)(serverStarted(_, config))
   }
@@ -97,6 +146,8 @@ object Accelerate {
   private def serverStarted(s: Server, config: Config): Unit = {
     import config._
     println("Server started.")
+
+    if (led != null) led.pulseGreen()
 
     val bufKernel = Buffer(s)
     import Ops._
@@ -208,6 +259,11 @@ object Accelerate {
 
     if (raf != null) message.Responder.add(s) {
       case message.Trigger(`nodeID`, 0, saveCountF) =>
+        if (keys != null && keys.read() == '1') {
+          if (led != null) led.pulseRed()
+          shutdown()
+        }
+
         val saveCount       = saveCountF.toInt
         val framesRecorded  = saveCount * 44100L / smpIncr
         val stopFrame       = oldFrames + framesRecorded
