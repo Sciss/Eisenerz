@@ -18,16 +18,17 @@ import java.io.PrintStream
 import de.sciss.file._
 import de.sciss.synth.Server
 import de.sciss.synth.io.AudioFile
-import de.sciss.{osc, synth}
+import de.sciss.{numbers, osc, synth}
 import scopt.OptionParser
 
 object ZeroPhase {
-  final case class Config(soundFile       : File    = file("/media/pi/zerophase/sound.w64"),
+  final case class Config(soundFile       : File    = file("/media/pi/exposure/sound.w64"),
                           debug           : Boolean = false,
                           runDurMinutes   : Int     = 0,
                           ignoreXRUNs     : Boolean = false,
                           sampleRate      : Int     = 44100,
-                          balance         : Double  = 0.0
+                          balance         : Double  = -0.17,
+                          diskBuf         : Int     = 32768
                          )
 
   def main(args: Array[String]): Unit = {
@@ -36,6 +37,11 @@ object ZeroPhase {
       opt[Int ]('d', "shutdown")     text "Run duration before shutting down in minutes (zero for no timeout)" action { (x, c) => c.copy(runDurMinutes = x) }
       opt[Unit]('y', "debug")        text "Enable debug logging" action { (_, c) => c.copy(debug = true) }
       opt[Unit]('x', "ignore-xruns") text "Disable reboot upon seeing XRUNs" action { (_, c) => c.copy(ignoreXRUNs = true) }
+      opt[Int ]('b', "buffer")       text "Disk buffer size (must be power of two)" action {
+        (x, c) => c.copy(diskBuf = x)} validate { x =>
+        import numbers.Implicits._
+        if (x.isPowerOfTwo) Right(()) else Left("Must be power of two")
+      }
     }
     parser.parse(args, Config()).fold(sys.exit(1))(run)
   }
@@ -130,6 +136,8 @@ object ZeroPhase {
         val durF        = (dur * spec.sampleRate).toLong
         val startFrame  = rrand(0, spec.numFrames - durF).toInt
 
+        if (config.debug) println(f"Spawn startFrame = $startFrame%d, dur = $dur%1.1f")
+
         val playSynth = { buf: Buffer =>
           val m = syn.newMsg(dfName, args = Seq[ControlSet]("buf" -> buf.id, "dur" -> dur, "bal" -> config.balance))
           s ! m // we need `syn.play()` in future ScalaCollider
@@ -141,7 +149,7 @@ object ZeroPhase {
         }
 
         Buffer.cue(s, path = config.soundFile.path,
-          startFrame = startFrame, numChannels = 2, bufFrames = 32768,
+          startFrame = startFrame, numChannels = 2, bufFrames = config.diskBuf,
           completion = playSynth)
       }
     }
