@@ -16,7 +16,8 @@ lazy val commonSettings = Seq(
     "de.sciss"          %% "fileutil"                   % "1.1.1",
     "de.sciss"          %% "numbers"                    % "0.1.1",
     "com.github.scopt"  %% "scopt"                      % "3.4.0",
-    "de.sciss"          %% "pdflitz"                    % "1.2.1"
+    "de.sciss"          %% "pdflitz"                    % "1.2.1",
+    "de.sciss"          %% "scissdsp"                   % "1.2.2"
   )
 )
 
