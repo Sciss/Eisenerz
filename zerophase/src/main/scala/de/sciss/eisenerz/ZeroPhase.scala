@@ -27,17 +27,23 @@ object ZeroPhase {
                           runDurMinutes   : Int     = 0,
                           ignoreXRUNs     : Boolean = false,
                           sampleRate      : Int     = 44100,
-                          balance         : Double  = -0.17,
-                          diskBuf         : Int     = 32768
+                          balance         : Double  = 0.0,
+                          diskBuf         : Int     = 32768,
+                          minPhrase       : Double  = 120.0,
+                          maxPhrase       : Double  = 240.0,
+                          fadePow         : Double  = 0.25
                          )
 
   def main(args: Array[String]): Unit = {
     val parser = new OptionParser[Config]("Accelerate") {
-      opt[File]('f', "soundfile")    text "Sound file" action { (x, c) => c.copy(soundFile = x) }
-      opt[Int ]('d', "shutdown")     text "Run duration before shutting down in minutes (zero for no timeout)" action { (x, c) => c.copy(runDurMinutes = x) }
-      opt[Unit]('y', "debug")        text "Enable debug logging" action { (_, c) => c.copy(debug = true) }
-      opt[Unit]('x', "ignore-xruns") text "Disable reboot upon seeing XRUNs" action { (_, c) => c.copy(ignoreXRUNs = true) }
-      opt[Int ]('b', "buffer")       text "Disk buffer size (must be power of two)" action {
+      opt[File  ]('f', "soundfile")    text "Sound file" action { (x, c) => c.copy(soundFile = x) }
+      opt[Int   ]('d', "shutdown")     text "Run duration before shutting down in minutes (zero for no timeout)" action { (x, c) => c.copy(runDurMinutes = x) }
+      opt[Double]("min-phrase")        text "Minimum phrase duration in seconds" action { (x, c) => c.copy(minPhrase = x) }
+      opt[Double]("max-phrase")        text "Maximum phrase duration in seconds" action { (x, c) => c.copy(maxPhrase = x) }
+      opt[Double]('p', "fade-pow")     text "Fade-in/out power factors (0.25 to 1)" action { (x, c) => c.copy(fadePow = x) }
+      opt[Unit  ]('y', "debug")        text "Enable debug logging" action { (_, c) => c.copy(debug = true) }
+      opt[Unit  ]('x', "ignore-xruns") text "Disable reboot upon seeing XRUNs" action { (_, c) => c.copy(ignoreXRUNs = true) }
+      opt[Int   ]('b', "buffer")       text "Disk buffer size (must be power of two)" action {
         (x, c) => c.copy(diskBuf = x)} validate { x =>
         import numbers.Implicits._
         if (x.isPowerOfTwo) Right(()) else Left("Must be power of two")
@@ -118,7 +124,8 @@ object ZeroPhase {
       val pos   = "bal".kr(0.0)
       val disk  = DiskIn.ar(numChannels = 2, buf = buf, loop = 1)
       val env   = Env.sine
-      val eg    = EnvGen.ar(env, timeScale = dur, doneAction = freeSelf)
+      new Env(0, List())
+      val eg    = EnvGen.ar(env, timeScale = dur, doneAction = freeSelf).pow(config.fadePow) // sqrt
       val sig   = disk * eg
       val bal   = Balance2.ar(inL = ChannelProxy(sig, 0), inR = ChannelProxy(sig, 1), pos = pos)
       Out.ar(0, bal)
@@ -132,7 +139,8 @@ object ZeroPhase {
       if (System.currentTimeMillis() > SHUTDOWN) shutdown()
       else {
         val syn         = Synth(s)
-        val dur         = rrand(60.0, 240.0)
+//        val dur         = rrand(60.0, 240.0)
+        val dur         = rrand(config.minPhrase, config.maxPhrase)
         val durF        = (dur * spec.sampleRate).toLong
         val startFrame  = rrand(0, spec.numFrames - durF).toInt
 
