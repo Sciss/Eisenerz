@@ -10,6 +10,10 @@ To contact the author, send an e-mail to `contact at sciss.de`.
 
 ## building
 
-Builds with sbt against Scala 2.11. The subprojects are independent sbt projects, found in directories
+Builds with sbt against Scala 2.11 (and some against 2.12). The subprojects are independent sbt projects, found in directories
 `accelerate`, `experiments`, `exposure`, `rails`, `zerophase`.
+
+Since the original project happened, some subproject have been lifted to newer Scala versions (compiles, but largely untested):
+
+- `accelerate` : Scala 2.12
 
