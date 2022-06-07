@@ -22,17 +22,20 @@ lazy val commonSettings = Seq(
     "com.pi4j"          %  "pi4j-core"                  % "1.0"
     // "de.sciss"          %  "jrpicam"                    % "0.1.0"
   ),
-  target in assembly := baseDirectory.value
+  assembly / target := baseDirectory.value
 )
 
 //lazy val cc_by_nc_nd = "CC BY-NC-ND 4.0" -> url("http://creativecommons.org/licenses/by-nc-nd/4.0/legalcode")
 lazy val gpl2        = "GPL v2+"         -> url("http://www.gnu.org/licenses/gpl-2.0.txt")
 
-lazy val root = Project(id = baseNameL, base = file("."))
+lazy val root = project.in(file("."))
   .settings(commonSettings)
+  .settings(
+    name := baseName
+  )
 
 // -------------
 
-mainClass in assembly := Some("de.sciss.eisenerz.ZeroPhase")
+ThisBuild / assembly / mainClass := Some("de.sciss.eisenerz.ZeroPhase")
 
-assemblyJarName in assembly := s"$baseName.jar"
+ThisBuild / assembly / assemblyJarName := s"$baseName.jar"

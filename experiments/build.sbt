@@ -32,8 +32,11 @@ lazy val commonSettings = Seq(
 //lazy val cc_by_nc_nd = "CC BY-NC-ND 4.0" -> url("http://creativecommons.org/licenses/by-nc-nd/4.0/legalcode")
 lazy val gpl2        = "GPL v2+"         -> url("http://www.gnu.org/licenses/gpl-2.0.txt")
 
-lazy val root = Project(id = baseNameL, base = file("."))
+lazy val root = project.in(file("."))
   .settings(commonSettings)
+  .settings(
+    name := baseName
+  )
 
 // -------------
 

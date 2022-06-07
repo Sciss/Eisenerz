@@ -23,5 +23,8 @@ lazy val commonSettings = Seq(
 
 lazy val gpl3        = "GPL v3+"         -> url("http://www.gnu.org/licenses/gpl-3.0.txt")
 
-lazy val root = Project(id = baseNameL, base = file("."))
+lazy val root = project.in(file("."))
   .settings(commonSettings)
+  .settings(
+    name := baseName
+  )
